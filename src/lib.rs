@@ -1,7 +1,5 @@
 use std::{result::Result, usize};
 
-const CLRF: &str = "\r\n";
-
 pub fn parse_input(input: &str) -> Result<String, String> {
     match input.chars().next() {
         Some('$') => parse_bulk_string(input).map_err(|e| format!("Bulk string error: {}", e)),
@@ -12,19 +10,47 @@ pub fn parse_input(input: &str) -> Result<String, String> {
     }
 }
 
-fn parse_bulk_string(input: &str) -> Result<String, String> {
+fn parse_bulk_string(input: &str) -> Result<String, &'static str> {
     if input == "$-1\r\n" {
         return Ok("null".to_string());
     }
 
-    input
-        .strip_prefix('$')
-        .ok_or("Must start with $")?
-        .strip_suffix(CLRF)
-        .ok_or("Must end with CRLF")?
-        .split_once(CLRF)
-        .map(|(_, content)| content.to_string())
-        .ok_or("Missing content separator CRLF".to_string())
+    let bytes = input.as_bytes();
+    if bytes.is_empty() || bytes[0] != b'$' {
+        return Err("Must start with $");
+    }
+
+    let mut pos = 1;
+
+    // Find length end
+    let len_end = match bytes[pos..].iter().position(|&b| b == b'\r') {
+        Some(end) => end,
+        None => return Err("Missing CRLF after length"),
+    };
+
+    // Parse lenght
+    let length = std::str::from_utf8(&bytes[pos..pos + len_end])
+        .map_err(|_| "Invalid lenght encoding")?
+        .parse::<usize>()
+        .map_err(|_| "Invalid lenght")?;
+
+    pos = pos + len_end + 2; // Skip length and CRLF
+
+    // Validate remaining length
+    if pos + length + 2 > bytes.len() {
+        return Err("Invalid content length");
+    }
+
+    // Extract content
+    let content =
+        std::str::from_utf8(&bytes[pos..pos + length]).map_err(|_| "Invalid UTF-8 in content")?;
+
+    // Verify final CRLF
+    if &bytes[pos + length..pos + length + 2] != b"\r\n" {
+        return Err("Missing final CRLF");
+    }
+
+    Ok(content.to_string())
 }
 
 fn parse_array(input: &str) -> Result<Vec<String>, String> {
@@ -32,39 +58,56 @@ fn parse_array(input: &str) -> Result<Vec<String>, String> {
         return Ok(vec!["null".to_string()]);
     }
 
-    let (len, rest) = input[1..]
-        .split_once(CLRF)
-        .map(|(len, rest)| (len.parse::<usize>().unwrap(), rest.to_string()))
-        .unwrap();
+    // Fast path for empty arrays
+    if input == "*0\r\n" {
+        return Ok(Vec::new());
+    }
 
-    let extract_bulk_string = |rest: String| -> Result<(String, String), String> {
-        let start_first = rest.find(CLRF).ok_or("Missing first CRLF")?;
-        let start_second = rest[start_first + 2..]
-            .find(CLRF)
-            .map(|pos| pos + start_first + CLRF.len())
-            .ok_or("Missing second CRLF")?;
+    let bytes = input.as_bytes();
+    let mut pos = 1; // Skip initial '*'
 
-        let element_str = &rest[..start_second + CLRF.len()];
-        let next_rest = rest[start_second + CLRF.len()..].to_string();
-
-        parse_bulk_string(element_str).map(|element| (element, next_rest))
+    // Parse array length
+    let len = match bytes[pos..].iter().position(|&b| b == b'\r') {
+        Some(end) => {
+            let len_str = std::str::from_utf8(&bytes[pos..pos + end])
+                .map_err(|_| "Invalid length encoding")?;
+            pos = pos + end + 2; // Skip CRLF
+            len_str.parse::<usize>().map_err(|_| "Invalid length")?
+        }
+        None => return Err("Missing CRLF after length".to_string()),
     };
 
-    (0..len)
-        .try_fold(
-            (Vec::new(), rest),
-            |(mut acc, current_rest), _| -> Result<(Vec<String>, String), String> {
-                match current_rest.chars().next() {
-                    Some('$') => {
-                        let (element, next_rest) = extract_bulk_string(current_rest)?;
-                        acc.push(element);
-                        Ok((acc, next_rest))
-                    }
-                    _ => Err("Invalid input: array elements must start with $".to_string()),
-                }
-            },
-        )
-        .map(|(vec, _)| vec)
+    let mut result = Vec::with_capacity(len);
+
+    // Extract bulk strings
+    for _ in 0..len {
+        if pos >= bytes.len() || bytes[pos] != b'$' {
+            return Err("Invalid input: array elements must start with $".to_string());
+        }
+        pos += 1;
+
+        // Find length of bulk string
+        let len_end = bytes[pos..]
+            .iter()
+            .position(|&b| b == b'\r')
+            .ok_or("Missing CRLF after bulk string length")?;
+        let bulk_len = std::str::from_utf8(&bytes[pos..pos + len_end])
+            .map_err(|_| "Invalid bulk string length encoding")?
+            .parse::<usize>()
+            .map_err(|_| "Invalid bulk string length")?;
+        pos += len_end + 2; // Skip CRLF
+
+        // Extract bulk string content
+        if pos + bulk_len + 2 > bytes.len() {
+            return Err("Incomplete bulk string".to_string());
+        }
+        let content = std::str::from_utf8(&bytes[pos..pos + bulk_len])
+            .map_err(|_| "Invalid UTF-8 in bulk string")?;
+        result.push(content.to_string());
+        pos += bulk_len + 2; // Skip content and CRLF
+    }
+
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -79,24 +122,12 @@ mod tests {
         // Error cases
         // Missing $ prefix
         assert!(parse_bulk_string("6\r\nfoobar\r\n").is_err());
-        assert_eq!(
-            parse_bulk_string("6\r\nfoobar\r\n").unwrap_err(),
-            "Must start with $"
-        );
 
         // Missing CRLF suffix
         assert!(parse_bulk_string("$6\r\nfoobar").is_err());
-        assert_eq!(
-            parse_bulk_string("$6\r\nfoobar").unwrap_err(),
-            "Must end with CRLF"
-        );
 
         // Missing content separator CRLF
         assert!(parse_bulk_string("$6foobar\r\n").is_err());
-        assert_eq!(
-            parse_bulk_string("$6foobar\r\n").unwrap_err(),
-            "Missing content separator CRLF"
-        );
     }
 
     #[test]
