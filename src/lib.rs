@@ -43,14 +43,18 @@ pub fn parse<R: BufRead>(input: &mut R) -> io::Result<Vec<Token>> {
             }
         }
         b'*' => {
-            let number_of_elements = read_element(input)?.parse::<usize>().map_err(|_| {
+            let number_of_elements = read_element(input)?.parse::<i32>().map_err(|_| {
                 io::Error::new(io::ErrorKind::InvalidData, "Invalid number of elements")
             })?;
-            let mut elements = Vec::new();
-            for _ in 0..number_of_elements {
-                elements.extend(parse(input)?);
+            if number_of_elements == -1 {
+                Ok(vec![Token::Null])
+            } else {
+                let mut elements = Vec::new();
+                for _ in 0..number_of_elements {
+                    elements.extend(parse(input)?);
+                }
+                Ok(elements)
             }
-            Ok(elements)
         }
         _ => Ok(Vec::new()),
     }
@@ -94,5 +98,16 @@ mod tests {
         assert_eq!(result.len(), 2);
         assert_eq!(result[0], Token::String("foo".to_string()));
         assert_eq!(result[1], Token::String("bar".to_string()));
+    }
+
+    #[test]
+    fn test_parse_array_null() {
+        let data = b"*-1\r\n";
+        let mut reader = BufReader::new(&data[..]);
+
+        let result = parse(&mut reader).unwrap();
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], Token::Null);
     }
 }
