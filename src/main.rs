@@ -39,7 +39,7 @@ fn handle_command(command: &Vec<redis::Token>) -> String {
 
     match command.first() {
         Some(redis::Token::String(cmd)) => {
-            match cmd.as_str() {
+            match cmd.to_uppercase().as_str() {
                 "PING" => String::from("+PONG\r\n"),
                 "ECHO" => {
                     // ECHO should have exactly 2 tokens (ECHO and the argument)
@@ -70,17 +70,26 @@ mod tests {
 
     #[test]
     fn test_handle_command_ping() {
-        let command = vec![redis::Token::String("PING".to_string())];
-        assert_eq!(handle_command(&command), "+PONG\r\n");
+        let command_uc = vec![redis::Token::String("PING".to_string())];
+        assert_eq!(handle_command(&command_uc), "+PONG\r\n");
+
+        let command_lc = vec![redis::Token::String("ping".to_string())];
+        assert_eq!(handle_command(&command_lc), "+PONG\r\n");
     }
 
     #[test]
     fn test_handle_command_echo() {
-        let command = vec![
+        let command_uc = vec![
             redis::Token::String("ECHO".to_string()),
             redis::Token::String("hello world".to_string()),
         ];
-        assert_eq!(handle_command(&command), "+hello world\r\n");
+        assert_eq!(handle_command(&command_uc), "+hello world\r\n");
+
+        let command_lc = vec![
+            redis::Token::String("echo".to_string()),
+            redis::Token::String("hello world".to_string()),
+        ];
+        assert_eq!(handle_command(&command_lc), "+hello world\r\n");
     }
 
     fn start_server() {
