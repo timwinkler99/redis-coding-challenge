@@ -19,7 +19,6 @@ fn handle_connection(mut stream: TcpStream) {
 
     match parse(&mut buf_reader) {
         Ok(command) => {
-            println!("{:?}", command);
             let response = handle_command(&command);
             stream.write_all(response.as_bytes()).unwrap();
         }
