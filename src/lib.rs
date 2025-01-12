@@ -11,7 +11,7 @@ pub enum Token {
 const CR: u8 = b'\r';
 const LF: u8 = b'\n';
 
-fn parse<R: BufRead>(input: &mut R) -> io::Result<Vec<Token>> {
+pub fn parse<R: BufRead>(input: &mut R) -> io::Result<Vec<Token>> {
     let mut first_byte = [0; 1];
     input.read_exact(&mut first_byte)?;
 
