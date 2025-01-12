@@ -89,6 +89,61 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_simple_string() {
+        let data = b"+OK\r\n";
+        let mut reader = BufReader::new(&data[..]);
+
+        let result = parse(&mut reader).unwrap();
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], Token::String("OK".to_string()));
+    }
+
+    #[test]
+    fn test_error() {
+        let data = b"-Error message\r\n";
+        let mut reader = BufReader::new(&data[..]);
+
+        let result = parse(&mut reader).unwrap();
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], Token::Error("Error message".to_string()));
+    }
+
+    #[test]
+    fn test_integer() {
+        let data = b":100\r\n";
+        let mut reader = BufReader::new(&data[..]);
+
+        let result = parse(&mut reader).unwrap();
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], Token::Integer(100));
+    }
+
+    #[test]
+    fn test_bulk_string() {
+        let data = b"$6\r\nfoobar\r\n";
+        let mut reader = BufReader::new(&data[..]);
+
+        let result = parse(&mut reader).unwrap();
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], Token::String("foobar".to_string()));
+    }
+
+    #[test]
+    fn test_bulk_string_null() {
+        let data = b"$-1\r\n";
+        let mut reader = BufReader::new(&data[..]);
+
+        let result = parse(&mut reader).unwrap();
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], Token::Null);
+    }
+
+    #[test]
     fn test_parse_array() {
         let data = b"*2\r\n$3\r\nfoo\r\n$3\r\nbar\r\n";
         let mut reader = BufReader::new(&data[..]);
