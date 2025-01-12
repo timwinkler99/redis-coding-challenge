@@ -1,141 +1,98 @@
-use std::{result::Result, usize};
+use std::io::{self, BufRead};
 
-pub fn parse_input(input: &str) -> Result<String, String> {
-    match input.chars().next() {
-        Some('$') => parse_bulk_string(input).map_err(|e| format!("Bulk string error: {}", e)),
-        Some('*') => parse_array(input)
-            .map(|arr| arr.join(","))
-            .map_err(|e| format!("Array error: {}", e)),
-        _ => Err("Invalid data type".to_string()),
+#[derive(Debug, PartialEq)]
+pub enum Token {
+    String(String),
+    Integer(i64),
+    Error(String),
+    Null,
+}
+
+const CR: u8 = b'\r';
+const LF: u8 = b'\n';
+
+fn parse<R: BufRead>(input: &mut R) -> io::Result<Vec<Token>> {
+    let mut first_byte = [0; 1];
+    input.read_exact(&mut first_byte)?;
+
+    match first_byte[0] {
+        b'+' => {
+            let element = read_element(input)?;
+            Ok(vec![Token::String(element)])
+        }
+        b'-' => {
+            let element = read_element(input)?;
+            Ok(vec![Token::Error(element)])
+        }
+        b':' => {
+            let element = read_element(input)?;
+            let number = element
+                .parse::<i64>()
+                .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Invalid integer"))?;
+            Ok(vec![Token::Integer(number)])
+        }
+        b'$' => {
+            let length = read_element(input)?
+                .parse::<i32>()
+                .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Invalid integer"))?;
+            if length == -1 {
+                Ok(vec![Token::Null])
+            } else {
+                let element = read_element(input)?;
+                Ok(vec![Token::String(element)])
+            }
+        }
+        b'*' => {
+            let number_of_elements = read_element(input)?.parse::<usize>().map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidData, "Invalid number of elements")
+            })?;
+            let mut elements = Vec::new();
+            for _ in 0..number_of_elements {
+                elements.extend(parse(input)?);
+            }
+            Ok(elements)
+        }
+        _ => Ok(Vec::new()),
     }
 }
 
-fn parse_bulk_string(input: &str) -> Result<String, &'static str> {
-    if input == "$-1\r\n" {
-        return Ok("null".to_string());
-    }
+fn read_element<R: BufRead>(input: &mut R) -> io::Result<String> {
+    let mut buffer = Vec::with_capacity(2048);
+    let mut element = [0; 1];
 
-    let bytes = input.as_bytes();
-    if bytes.is_empty() || bytes[0] != b'$' {
-        return Err("Must start with $");
-    }
-
-    let mut pos = 1;
-
-    // Find length end
-    let len_end = match bytes[pos..].iter().position(|&b| b == b'\r') {
-        Some(end) => end,
-        None => return Err("Missing CRLF after length"),
-    };
-
-    // Parse lenght
-    let length = std::str::from_utf8(&bytes[pos..pos + len_end])
-        .map_err(|_| "Invalid lenght encoding")?
-        .parse::<usize>()
-        .map_err(|_| "Invalid lenght")?;
-
-    pos = pos + len_end + 2; // Skip length and CRLF
-
-    // Validate remaining length
-    if pos + length + 2 > bytes.len() {
-        return Err("Invalid content length");
-    }
-
-    // Extract content
-    let content =
-        std::str::from_utf8(&bytes[pos..pos + length]).map_err(|_| "Invalid UTF-8 in content")?;
-
-    // Verify final CRLF
-    if &bytes[pos + length..pos + length + 2] != b"\r\n" {
-        return Err("Missing final CRLF");
-    }
-
-    Ok(content.to_string())
-}
-
-fn parse_array(input: &str) -> Result<Vec<String>, String> {
-    if input == "*-1\r\n" {
-        return Ok(vec!["null".to_string()]);
-    }
-
-    // Fast path for empty arrays
-    if input == "*0\r\n" {
-        return Ok(Vec::new());
-    }
-
-    let bytes = input.as_bytes();
-    let mut pos = 1; // Skip initial '*'
-
-    // Parse array length
-    let len = match bytes[pos..].iter().position(|&b| b == b'\r') {
-        Some(end) => {
-            let len_str = std::str::from_utf8(&bytes[pos..pos + end])
-                .map_err(|_| "Invalid length encoding")?;
-            pos = pos + end + 2; // Skip CRLF
-            len_str.parse::<usize>().map_err(|_| "Invalid length")?
+    while input.read(&mut element)? > 0 {
+        if element[0] == CR {
+            break;
         }
-        None => return Err("Missing CRLF after length".to_string()),
-    };
-
-    let mut result = Vec::with_capacity(len);
-
-    // Extract bulk strings
-    for _ in 0..len {
-        if pos >= bytes.len() || bytes[pos] != b'$' {
-            return Err("Invalid input: array elements must start with $".to_string());
-        }
-        pos += 1;
-
-        // Find length of bulk string
-        let len_end = bytes[pos..]
-            .iter()
-            .position(|&b| b == b'\r')
-            .ok_or("Missing CRLF after bulk string length")?;
-        let bulk_len = std::str::from_utf8(&bytes[pos..pos + len_end])
-            .map_err(|_| "Invalid bulk string length encoding")?
-            .parse::<usize>()
-            .map_err(|_| "Invalid bulk string length")?;
-        pos += len_end + 2; // Skip CRLF
-
-        // Extract bulk string content
-        if pos + bulk_len + 2 > bytes.len() {
-            return Err("Incomplete bulk string".to_string());
-        }
-        let content = std::str::from_utf8(&bytes[pos..pos + bulk_len])
-            .map_err(|_| "Invalid UTF-8 in bulk string")?;
-        result.push(content.to_string());
-        pos += bulk_len + 2; // Skip content and CRLF
+        buffer.push(element[0]);
     }
 
-    Ok(result)
+    input.read_exact(&mut element)?;
+    if element[0] != LF {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Unexpected end of token",
+        ));
+    }
+
+    Ok(String::from_utf8(buffer).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?)
 }
 
 #[cfg(test)]
 mod tests {
+    use io::BufReader;
+
     use super::*;
 
     #[test]
-    fn test_parse_bulk_string() {
-        assert_eq!(parse_bulk_string("$6\r\nfoobar\r\n").unwrap(), "foobar");
-        assert_eq!(parse_bulk_string("$-1\r\n").unwrap(), ("null"));
-
-        // Error cases
-        // Missing $ prefix
-        assert!(parse_bulk_string("6\r\nfoobar\r\n").is_err());
-
-        // Missing CRLF suffix
-        assert!(parse_bulk_string("$6\r\nfoobar").is_err());
-
-        // Missing content separator CRLF
-        assert!(parse_bulk_string("$6foobar\r\n").is_err());
-    }
-
-    #[test]
     fn test_parse_array() {
-        assert_eq!(
-            parse_array("*2\r\n$3\r\nfoo\r\n$3\r\nbar\r\n").unwrap(),
-            vec!["foo", "bar"]
-        );
-        assert_eq!(parse_array("*-1\r\n").unwrap(), vec!["null"]);
+        let data = b"*2\r\n$3\r\nfoo\r\n$3\r\nbar\r\n";
+        let mut reader = BufReader::new(&data[..]);
+
+        let result = parse(&mut reader).unwrap();
+
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0], Token::String("foo".to_string()));
+        assert_eq!(result[1], Token::String("bar".to_string()));
     }
 }
