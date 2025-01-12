@@ -56,7 +56,10 @@ pub fn parse<R: BufRead>(input: &mut R) -> io::Result<Vec<Token>> {
                 Ok(elements)
             }
         }
-        _ => Ok(Vec::new()),
+        _ => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Invalid data type",
+        )),
     }
 }
 
