@@ -42,22 +42,16 @@ fn handle_command(command: &Vec<redis::Token>) -> String {
             match cmd.as_str() {
                 "PING" => String::from("+PONG\r\n"),
                 "ECHO" => {
-                    if command.len() < 2 {
-                        return String::from("-ERR ECHO requires an argument\r\n");
+                    // ECHO should have exactly 2 tokens (ECHO and the argument)
+                    if command.len() != 2 {
+                        return String::from("-ERR ECHO requires exactly one argument\r\n");
                     }
-                    // Join all remaining tokens after ECHO
-                    let echo_text: String = command[1..]
-                        .iter()
-                        .filter_map(|token| {
-                            if let redis::Token::String(s) = token {
-                                Some(s.as_str())
-                            } else {
-                                None
-                            }
-                        })
-                        .collect::<Vec<&str>>()
-                        .join(" ");
-                    format!("+{}\r\n", echo_text)
+                    // Get the second token (the argument)
+                    if let Some(redis::Token::String(s)) = command.get(1) {
+                        format!("+{}\r\n", s)
+                    } else {
+                        String::from("-ERR Invalid ECHO argument format\r\n")
+                    }
                 }
                 _ => format!("-ERR Unknown command '{}'\r\n", cmd),
             }
@@ -84,8 +78,7 @@ mod tests {
     fn test_handle_command_echo() {
         let command = vec![
             redis::Token::String("ECHO".to_string()),
-            redis::Token::String("hello".to_string()),
-            redis::Token::String("world".to_string()),
+            redis::Token::String("hello world".to_string()),
         ];
         assert_eq!(handle_command(&command), "+hello world\r\n");
     }
