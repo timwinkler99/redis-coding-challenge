@@ -69,7 +69,7 @@ fn handle_command(command: &Vec<redis::Token>) -> String {
                     }
                     // Get the second token (the argument)
                     if let Some(redis::Token::String(s)) = command.get(1) {
-                        format!("+{}\r\n", s)
+                        format!("${}\r\n{}\r\n", s.len(), s)
                     } else {
                         String::from("-ERR Invalid ECHO argument format\r\n")
                     }
