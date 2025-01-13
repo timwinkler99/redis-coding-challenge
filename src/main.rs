@@ -110,13 +110,13 @@ mod tests {
             redis::Token::String("ECHO".to_string()),
             redis::Token::String("hello world".to_string()),
         ];
-        assert_eq!(handle_command(&command_uc), "+hello world\r\n");
+        assert_eq!(handle_command(&command_uc), "$11\r\nhello world\r\n");
 
         let command_lc = vec![
             redis::Token::String("echo".to_string()),
             redis::Token::String("hello world".to_string()),
         ];
-        assert_eq!(handle_command(&command_lc), "+hello world\r\n");
+        assert_eq!(handle_command(&command_lc), "$11\r\nhello world\r\n");
     }
 
     fn start_server() {
@@ -155,9 +155,23 @@ mod tests {
 
             let mut reader = BufReader::new(&stream);
             let mut response = String::new();
-            reader.read_line(&mut response).unwrap();
+            let mut buffer = String::new();
 
-            assert_eq!(response, "+hello\r\n");
+            // Read the response in a loop until we have the complete response
+            loop {
+                buffer.clear();
+                let bytes_read = reader.read_line(&mut buffer).unwrap();
+                if bytes_read == 0 {
+                    break; // End of stream
+                }
+                response.push_str(&buffer);
+                // Check if we have read the complete response
+                if response.ends_with("\r\n") && response.contains("\r\nhello\r\n") {
+                    break;
+                }
+            }
+
+            assert_eq!(response, "$5\r\nhello\r\n");
         } else {
             panic!("Failed to connect to server");
         }
