@@ -15,18 +15,33 @@ fn main() {
 }
 
 fn handle_connection(mut stream: TcpStream) {
-    let mut buf_reader = BufReader::new(&stream);
+    loop {
+        let command = {
+            let mut buf_reader = BufReader::new(&stream);
+            match parse(&mut buf_reader) {
+                Ok(command) => command,
+                Err(e) => {
+                    if e.kind() == std::io::ErrorKind::UnexpectedEof {
+                        // Client closed the connection
+                        println!("Client disconnected");
+                        break;
+                    } else {
+                        eprintln!("Failed to parse command: {}", e);
+                        if let Err(e) = stream.write_all(b"-ERR Failed to parse command\r\n") {
+                            eprintln!("Failed to write error message: {}", e);
+                            break;
+                        }
+                        continue;
+                    }
+                }
+            }
+        };
 
-    match parse(&mut buf_reader) {
-        Ok(command) => {
-            let response = handle_command(&command);
-            stream.write_all(response.as_bytes()).unwrap();
-        }
-        Err(e) => {
-            eprintln!("Failed to parse command: {}", e);
-            stream
-                .write_all(b"-ERR Failed to parse command\r\n")
-                .unwrap();
+        let response = handle_command(&command);
+        println!("Writing to stream: {:?}", response);
+        if let Err(e) = stream.write_all(response.as_bytes()) {
+            eprintln!("Failed to write to stream: {}", e);
+            break;
         }
     }
 }
