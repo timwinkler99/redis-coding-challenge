@@ -1,7 +1,7 @@
 use std::io::{BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 
-use redis::parse;
+use redis::{parse, RespValue};
 
 fn main() {
     let listener = TcpListener::bind("127.0.0.1:6379").unwrap();
@@ -37,7 +37,8 @@ fn handle_connection(mut stream: TcpStream) {
             }
         };
 
-        let response = handle_command(&command);
+        let result = handle_command(&command);
+        let response = result.serialize();
         println!("Writing to stream: {:?}", response);
         if let Err(e) = stream.write_all(response.as_bytes()) {
             eprintln!("Failed to write to stream: {}", e);
@@ -46,44 +47,49 @@ fn handle_connection(mut stream: TcpStream) {
     }
 }
 
-fn handle_command(command: &Vec<redis::Token>) -> String {
-    if command.len() < 1 {
-        return String::from("-ERR Invalid command\r\n");
-    }
+fn handle_command(command: &RespValue) -> RespValue {
+    match command {
+        RespValue::Array(Some(elements)) => {
+            if elements.is_empty() {
+                return RespValue::Error("ERR Invalid command".to_string());
+            }
 
-    match command.first() {
-        Some(redis::Token::String(cmd)) => {
-            match cmd.to_uppercase().as_str() {
-                "PING" => {
-                    if command.len() != 1 {
-                        return String::from(
-                            "-ERR wrong number of arguments for 'PING' command\r\n",
-                        );
-                    }
-                    String::from("+PONG\r\n")
-                }
-                "ECHO" => {
-                    // ECHO should have exactly 2 tokens (ECHO and the argument)
-                    if command.len() != 2 {
-                        return String::from(
-                            "-ERR wrong number of arguments for 'ECHO' command\r\n",
-                        );
-                    }
-                    // Get the second token (the argument)
-                    if let Some(redis::Token::String(s)) = command.get(1) {
-                        if s.len() == 0 {
-                            format!("$-1\r\n",)
-                        } else {
-                            format!("${}\r\n{}\r\n", s.len(), s)
+            match &elements[0] {
+                RespValue::BulkString(Some(cmd)) => {
+                    match cmd.to_uppercase().as_str() {
+                        "PING" => {
+                            if elements.len() != 1 {
+                                return RespValue::Error(
+                                    "ERR wrong number of arguments for 'PING' command".to_string(),
+                                );
+                            }
+                            RespValue::SimpleString("PONG".to_string())
                         }
-                    } else {
-                        String::from("-ERR Invalid ECHO argument format\r\n")
+                        "ECHO" => {
+                            // ECHO should have exactly 2 elements (ECHO and the argument)
+                            if elements.len() != 2 {
+                                return RespValue::Error(
+                                    "ERR wrong number of arguments for 'ECHO' command".to_string(),
+                                );
+                            }
+                            // Get the second element (the argument)
+                            match &elements[1] {
+                                RespValue::BulkString(Some(s)) => {
+                                    RespValue::BulkString(Some(s.clone()))
+                                }
+                                RespValue::BulkString(None) => RespValue::BulkString(None),
+                                _ => {
+                                    RespValue::Error("ERR Invalid ECHO argument format".to_string())
+                                }
+                            }
+                        }
+                        _ => RespValue::Error(format!("ERR Unknown command '{}'", cmd)),
                     }
                 }
-                _ => format!("-ERR Unknown command '{}'\r\n", cmd),
+                _ => RespValue::Error("ERR Invalid command format".to_string()),
             }
         }
-        _ => String::from("-ERR Invalid command format\r\n"),
+        _ => RespValue::Error("ERR Invalid command format".to_string()),
     }
 }
 
@@ -97,26 +103,38 @@ mod tests {
 
     #[test]
     fn test_handle_command_ping() {
-        let command_uc = vec![redis::Token::String("PING".to_string())];
-        assert_eq!(handle_command(&command_uc), "+PONG\r\n");
+        let command = RespValue::Array(Some(vec![RespValue::BulkString(Some("PING".to_string()))]));
+        assert_eq!(
+            handle_command(&command),
+            RespValue::SimpleString("PONG".to_string())
+        );
 
-        let command_lc = vec![redis::Token::String("ping".to_string())];
-        assert_eq!(handle_command(&command_lc), "+PONG\r\n");
+        let command = RespValue::Array(Some(vec![RespValue::BulkString(Some("ping".to_string()))]));
+        assert_eq!(
+            handle_command(&command),
+            RespValue::SimpleString("PONG".to_string())
+        );
     }
 
     #[test]
     fn test_handle_command_echo() {
-        let command_uc = vec![
-            redis::Token::String("ECHO".to_string()),
-            redis::Token::String("hello world".to_string()),
-        ];
-        assert_eq!(handle_command(&command_uc), "$11\r\nhello world\r\n");
+        let command = RespValue::Array(Some(vec![
+            RespValue::BulkString(Some("ECHO".to_string())),
+            RespValue::BulkString(Some("hello world".to_string())),
+        ]));
+        assert_eq!(
+            handle_command(&command),
+            RespValue::BulkString(Some("hello world".to_string()))
+        );
 
-        let command_lc = vec![
-            redis::Token::String("echo".to_string()),
-            redis::Token::String("hello world".to_string()),
-        ];
-        assert_eq!(handle_command(&command_lc), "$11\r\nhello world\r\n");
+        let command = RespValue::Array(Some(vec![
+            RespValue::BulkString(Some("echo".to_string())),
+            RespValue::BulkString(Some("hello world".to_string())),
+        ]));
+        assert_eq!(
+            handle_command(&command),
+            RespValue::BulkString(Some("hello world".to_string()))
+        );
     }
 
     fn start_server() {

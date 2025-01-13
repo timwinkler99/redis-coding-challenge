@@ -1,45 +1,63 @@
 use std::io::{self, BufRead};
 
 #[derive(Debug, PartialEq)]
-pub enum Token {
-    String(String),
-    Integer(i64),
+pub enum RespValue {
+    SimpleString(String),
     Error(String),
-    Null,
+    Integer(i64),
+    BulkString(Option<String>),    // None for NULL bulk string
+    Array(Option<Vec<RespValue>>), // None for NULL array
+}
+
+impl RespValue {
+    pub fn serialize(&self) -> String {
+        match &self {
+            RespValue::SimpleString(s) => format!("+{}\r\n", s),
+            RespValue::Error(s) => format!("-{}\r\n", s),
+            RespValue::Integer(i) => format!(":{}\r\n", i),
+            RespValue::BulkString(Some(s)) => format!("${}\r\n{}\r\n", s.len(), s),
+            RespValue::BulkString(None) => "$-1\r\n".to_string(),
+            RespValue::Array(Some(values)) => {
+                let serialized_elements: String = values.iter().map(|v| v.serialize()).collect();
+                format!("*{}\r\n{}", values.len(), serialized_elements)
+            }
+            RespValue::Array(None) => "*-1\r\n".to_string(),
+        }
+    }
 }
 
 const CR: u8 = b'\r';
 const LF: u8 = b'\n';
 
-pub fn parse<R: BufRead>(input: &mut R) -> io::Result<Vec<Token>> {
+pub fn parse<R: BufRead>(input: &mut R) -> io::Result<RespValue> {
     let mut first_byte = [0; 1];
     input.read_exact(&mut first_byte)?;
 
     match first_byte[0] {
         b'+' => {
             let element = read_element(input)?;
-            Ok(vec![Token::String(element)])
+            Ok(RespValue::SimpleString(element))
         }
         b'-' => {
             let element = read_element(input)?;
-            Ok(vec![Token::Error(element)])
+            Ok(RespValue::Error(element))
         }
         b':' => {
             let element = read_element(input)?;
             let number = element
                 .parse::<i64>()
                 .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Invalid integer"))?;
-            Ok(vec![Token::Integer(number)])
+            Ok(RespValue::Integer(number))
         }
         b'$' => {
             let length = read_element(input)?
                 .parse::<i32>()
                 .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Invalid integer"))?;
             if length == -1 {
-                Ok(vec![Token::Null])
+                Ok(RespValue::BulkString(None))
             } else {
                 let element = read_element(input)?;
-                Ok(vec![Token::String(element)])
+                Ok(RespValue::BulkString(Some(element)))
             }
         }
         b'*' => {
@@ -47,13 +65,13 @@ pub fn parse<R: BufRead>(input: &mut R) -> io::Result<Vec<Token>> {
                 io::Error::new(io::ErrorKind::InvalidData, "Invalid number of elements")
             })?;
             if number_of_elements == -1 {
-                Ok(vec![Token::Null])
+                Ok(RespValue::Array(None))
             } else {
                 let mut elements = Vec::new();
                 for _ in 0..number_of_elements {
-                    elements.extend(parse(input)?);
+                    elements.push(parse(input)?);
                 }
-                Ok(elements)
+                Ok(RespValue::Array(Some(elements)))
             }
         }
         _ => Err(io::Error::new(
@@ -87,7 +105,7 @@ fn read_element<R: BufRead>(input: &mut R) -> io::Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use io::BufReader;
+    use std::io::BufReader;
 
     use super::*;
 
@@ -98,8 +116,7 @@ mod tests {
 
         let result = parse(&mut reader).unwrap();
 
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0], Token::String("OK".to_string()));
+        assert_eq!(result, RespValue::SimpleString("OK".to_string()));
     }
 
     #[test]
@@ -109,8 +126,7 @@ mod tests {
 
         let result = parse(&mut reader).unwrap();
 
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0], Token::Error("Error message".to_string()));
+        assert_eq!(result, RespValue::Error("Error message".to_string()));
     }
 
     #[test]
@@ -120,8 +136,7 @@ mod tests {
 
         let result = parse(&mut reader).unwrap();
 
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0], Token::Integer(100));
+        assert_eq!(result, RespValue::Integer(100));
     }
 
     #[test]
@@ -131,8 +146,7 @@ mod tests {
 
         let result = parse(&mut reader).unwrap();
 
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0], Token::String("foobar".to_string()));
+        assert_eq!(result, RespValue::BulkString(Some("foobar".to_string())));
     }
 
     #[test]
@@ -142,8 +156,7 @@ mod tests {
 
         let result = parse(&mut reader).unwrap();
 
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0], Token::Null);
+        assert_eq!(result, RespValue::BulkString(None));
     }
 
     #[test]
@@ -153,9 +166,13 @@ mod tests {
 
         let result = parse(&mut reader).unwrap();
 
-        assert_eq!(result.len(), 2);
-        assert_eq!(result[0], Token::String("foo".to_string()));
-        assert_eq!(result[1], Token::String("bar".to_string()));
+        assert_eq!(
+            result,
+            RespValue::Array(Some(vec![
+                RespValue::BulkString(Some("foo".to_string())),
+                RespValue::BulkString(Some("bar".to_string()))
+            ]))
+        );
     }
 
     #[test]
@@ -165,7 +182,6 @@ mod tests {
 
         let result = parse(&mut reader).unwrap();
 
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0], Token::Null);
+        assert_eq!(result, RespValue::Array(None));
     }
 }
