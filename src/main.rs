@@ -65,7 +65,9 @@ fn handle_command(command: &Vec<redis::Token>) -> String {
                 "ECHO" => {
                     // ECHO should have exactly 2 tokens (ECHO and the argument)
                     if command.len() != 2 {
-                        return String::from("-ERR ECHO requires exactly one argument\r\n");
+                        return String::from(
+                            "-ERR wrong number of arguments for 'ECHO' command\r\n",
+                        );
                     }
                     // Get the second token (the argument)
                     if let Some(redis::Token::String(s)) = command.get(1) {
