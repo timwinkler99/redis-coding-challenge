@@ -39,7 +39,14 @@ fn handle_command(command: &Vec<redis::Token>) -> String {
     match command.first() {
         Some(redis::Token::String(cmd)) => {
             match cmd.to_uppercase().as_str() {
-                "PING" => String::from("+PONG\r\n"),
+                "PING" => {
+                    if command.len() != 1 {
+                        return String::from(
+                            "-ERR wrong number of arguments for 'PING' command\r\n",
+                        );
+                    }
+                    String::from("+PONG\r\n")
+                }
                 "ECHO" => {
                     // ECHO should have exactly 2 tokens (ECHO and the argument)
                     if command.len() != 2 {
